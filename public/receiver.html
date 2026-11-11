@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#12131c">
+    <title>WebMic · 手机当麦克风</title>
+    <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+    <main class="app">
+        <header class="brand">
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+                    <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+                    <path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"></path>
+                </svg>
+            </div>
+            <div>
+                <h1>WebMic</h1>
+                <p>把手机变成电脑的麦克风</p>
+            </div>
+        </header>
+
+        <div id="status" class="status">
+            <span id="status-dot" class="dot"></span>
+            <span id="status-text">未开始</span>
+        </div>
+
+        <div id="secure-hint" class="secure-hint" hidden>
+            当前是 <code>http://</code> 地址，浏览器在这种页面里禁用了音频输出（AudioWorklet、设备选择）。
+            请改用 <a id="secure-link" href="#">https 地址</a> 打开后再点"开始接收"，
+            首次需点"高级 → 继续前往"。
+        </div>
+
+        <section class="card">
+            <div class="meter" id="meter" aria-hidden="true"></div>
+            <div class="actions">
+                <button id="start-btn" class="big-btn" type="button" aria-label="开始接收">
+                    <svg id="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 3l14 9-14 9V3z"></path>
+                    </svg>
+                </button>
+                <small id="btn-hint">点击开始接收手机的声音</small>
+            </div>
+            <div class="stats">
+                <div class="stat"><b id="stat-buffer">--</b><span>缓冲</span></div>
+                <div class="stat"><b id="stat-underrun">0</b><span>断流次数</span></div>
+                <div class="stat"><b id="stat-latency">--</b><span>网络延迟</span></div>
+            </div>
+            <div class="row record-row">
+                <button id="record-btn" class="btn shrink" type="button" disabled>● 录制为 WAV</button>
+                <span class="hint" id="record-info">未录制</span>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="diag">
+                <div class="diag-item">
+                    <span>虚拟声卡</span>
+                    <b id="diag-cable" class="muted">检测中…</b>
+                </div>
+                <div class="diag-item">
+                    <span>立体声混音</span>
+                    <b id="diag-stereo" class="muted">检测中…</b>
+                </div>
+            </div>
+            <p class="hint" id="mode-hint">正在检测可用的输出方式…</p>
+        </section>
+
+        <section class="card">
+            <div class="qr-wrap">
+                <img id="qr" alt="手机扫码连接" width="116" height="116">
+                <div class="qr-info">
+                    <div class="room-code" id="room-code">----</div>
+                    <div>手机扫码，或打开：</div>
+                    <div id="sender-url" style="word-break: break-all;">--</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="field">
+                <label for="device">播放到哪个设备
+                    <span class="shrink" style="display:flex;gap:6px">
+                        <button class="btn ghost shrink" id="pick-device" type="button" style="padding:2px 8px;font-size:11px" hidden>选择…</button>
+                        <button class="btn ghost shrink" id="refresh-devices" type="button" style="padding:2px 8px;font-size:11px">刷新</button>
+                    </span>
+                </label>
+                <select id="device">
+                    <option value="">系统默认输出</option>
+                </select>
+                <p class="hint" id="device-hint" hidden>看不到 <code>CABLE Input</code>？点"选择…"直接挑选（不需要麦克风权限），或点"刷新"并允许一次麦克风权限。</p>
+            </div>
+            <div class="field">
+                <label for="target">缓冲深度 <output id="target-value">40 ms</output></label>
+                <div class="range">
+                    <input type="range" id="target" min="20" max="120" step="10" value="40">
+                </div>
+                <p class="hint">越小越低延迟，但网络抖动时更容易断流。唱歌建议 30–50ms。</p>
+            </div>
+        </section>
+
+        <details class="card">
+            <summary>怎么让音乐软件把它当成麦克风</summary>
+            <div class="body hint">
+                <p>1. 安装 <strong>VB-Audio Virtual Cable</strong>（免费），重启后系统里会多出 <code>CABLE Input</code> 和 <code>CABLE Output</code>。</p>
+                <p>2. 在上面的"播放到哪个设备"里选 <code>CABLE Input</code>。</p>
+                <p>3. 在微信 / OBS / 音乐软件里，把麦克风选成 <code>CABLE Output</code>。</p>
+                <p>4. 唱歌时请用<strong>耳机</strong>听伴奏，用外放容易啸叫。</p>
+            </div>
+        </details>
+
+        <details class="card">
+            <summary>不想装任何驱动？三种零安装用法</summary>
+            <div class="body hint">
+                <p><strong>① 会议 / 网课 / 语音聊天</strong><br>
+                    上面的"播放到哪个设备"保持 <code>系统默认输出</code>，在会议软件里把麦克风选成
+                    <code>立体声混音</code>（有些驱动叫 <code>Stereo Mix</code> / <code>What U Hear</code>）。<br>
+                    注意：它会把电脑正在播的所有声音一起送过去。想避免对方听到自己说话，请把会议软件的声音输出到
+                    另一块声卡（USB 耳机或 HDMI 显示器），或者在会议软件里开启回声消除。</p>
+
+                <p><strong>② 直播 / OBS</strong><br>
+                    不用虚拟声卡。OBS 里添加「应用程序音频采集」，目标选运行接收页的浏览器（Chrome/Edge），
+                    就只会把这路手机声音送进直播。也可以直接添加"浏览器源"打开接收页并勾选控制音频。</p>
+
+                <p><strong>③ 只想录一段人声</strong><br>
+                    点上面的"录制为 WAV"，接收到的原始 PCM 会直接存成 16bit/48kHz 单声道 WAV，
+                    再拖进任何录音软件或剪辑软件即可。不受缓冲、断流影响。</p>
+
+                <p><strong>唱歌 / 乐器 / 需要"只录手机"的场合</strong>仍然需要虚拟声卡：
+                    Windows 自带没有任何虚拟录音设备，立体声混音会把伴奏一起录进去，蓝牙免提只有 16kHz。</p>
+            </div>
+        </details>
+
+        <div class="foot">同一局域网内使用 · 手机端需通过 HTTPS 打开</div>
+    </main>
+
+    <audio id="sink" autoplay playsinline hidden></audio>
+    <div id="toast" class="toast" role="status"></div>
+
+    <script src="/dsp.js"></script>
+    <script src="/receiver.js"></script>
+</body>
+</html>

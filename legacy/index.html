@@ -1,0 +1,309 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WebMic - 手机变麦克风</title>
+    <!-- 引入 TailwindCSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1c2c 0%, #4a192c 100%);
+            color: white;
+            overflow: hidden;
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .mic-btn {
+            transition: all 0.3s ease;
+        }
+        .mic-btn:active {
+            transform: scale(0.95);
+        }
+        .pulse-ring {
+            position: absolute;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            100% { transform: scale(1.2); opacity: 0; }
+        }
+        canvas {
+            width: 100%;
+            height: 100px;
+        }
+        /* 隐藏滚动条 */
+        ::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col items-center justify-center p-4">
+
+    <!-- 主容器 -->
+    <div class="glass-panel rounded-3xl p-8 w-full max-w-md flex flex-col items-center relative">
+
+        <!-- 标题 -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-500 to-violet-500">
+                <i class="fa-solid fa-microphone-lines mr-2"></i>WebMic
+            </h1>
+            <p class="text-gray-300 text-sm mt-2">将手机变为无线麦克风</p>
+        </div>
+
+        <!-- 状态指示器 -->
+        <div id="status-indicator" class="mb-6 flex items-center space-x-2 bg-black/30 px-4 py-2 rounded-full">
+            <div id="status-dot" class="w-3 h-3 rounded-full bg-red-500"></div>
+            <span id="status-text" class="text-xs font-medium text-gray-300">未连接</span>
+        </div>
+
+        <!-- 可视化区域 -->
+        <div class="w-full h-32 bg-black/20 rounded-xl mb-8 relative overflow-hidden flex items-center justify-center">
+            <canvas id="visualizer"></canvas>
+            <div id="placeholder-text" class="absolute text-gray-500 text-sm">等待音频输入...</div>
+        </div>
+
+        <!-- 控制按钮 -->
+        <button id="toggle-btn" class="mic-btn w-20 h-20 rounded-full bg-gradient-to-br from-pink-500 to-violet-600 flex items-center justify-center shadow-lg shadow-pink-500/30 relative group">
+            <div class="pulse-ring w-20 h-20 bg-pink-500 hidden" id="pulse-effect"></div>
+            <i class="fa-solid fa-power-off text-3xl text-white" id="btn-icon"></i>
+        </button>
+        <p class="mt-4 text-xs text-gray-400">点击开启/关闭麦克风</p>
+
+        <!-- 配置面板 (折叠) -->
+        <div class="mt-8 w-full">
+            <details class="group">
+                <summary class="flex justify-between items-center font-medium cursor-pointer list-none text-sm text-gray-300 hover:text-white transition">
+                    <span><i class="fa-solid fa-gear mr-2"></i>高级设置</span>
+                    <span class="transition group-open:rotate-180">
+                        <i class="fa-solid fa-chevron-down"></i>
+                    </span>
+                </summary>
+                <div class="mt-4 space-y-4 text-sm text-gray-300">
+                    <div>
+                        <label class="block mb-1">服务器地址 (WebSocket)</label>
+                        <input type="text" id="server-url" value="ws://localhost:8080" class="w-full bg-black/30 border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-pink-500 text-white">
+                    </div>
+                    <div>
+                        <label class="block mb-1">采样率</label>
+                        <select id="sample-rate" class="w-full bg-black/30 border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-pink-500 text-white">
+                            <option value="44100">44100 Hz (CD音质)</option>
+                            <option value="48000">48000 Hz (专业音频)</option>
+                            <option value="16000">16000 Hz (语音通话)</option>
+                        </select>
+                    </div>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let audioContext;
+        let mediaStream;
+        let mediaRecorder;
+        let analyser;
+        let dataArray;
+        let canvas, ctx;
+        let isRecording = false;
+        let socket;
+        let animationId;
+
+        // DOM 元素
+        const toggleBtn = document.getElementById('toggle-btn');
+        const btnIcon = document.getElementById('btn-icon');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const pulseEffect = document.getElementById('pulse-effect');
+        const placeholderText = document.getElementById('placeholder-text');
+        const serverUrlInput = document.getElementById('server-url');
+        const sampleRateSelect = document.getElementById('sample-rate');
+
+        // 初始化 Canvas
+        function initCanvas() {
+            canvas = document.getElementById('visualizer');
+            ctx = canvas.getContext('2d');
+            // 处理高分屏
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+        }
+
+        // 绘制波形
+        function drawVisualizer() {
+            if (!analyser) return;
+
+            analyser.getByteFrequencyData(dataArray);
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.fillRect(0, 0, canvas.width / window.devicePixelRatio, canvas.height / window.devicePixelRatio);
+
+            const barWidth = (canvas.width / window.devicePixelRatio) / dataArray.length;
+            let barHeight;
+            let x = 0;
+
+            for(let i = 0; i < dataArray.length; i++) {
+                barHeight = dataArray[i] / 2; // 缩放高度
+
+                // 渐变色
+                const gradient = ctx.createLinearGradient(0, canvas.height / window.devicePixelRatio, 0, 0);
+                gradient.addColorStop(0, '#ec4899'); // pink-500
+                gradient.addColorStop(1, '#8b5cf6'); // violet-500
+
+                ctx.fillStyle = gradient;
+                ctx.fillRect(x, (canvas.height / window.devicePixelRatio) - barHeight, barWidth, barHeight);
+
+                x += barWidth + 1;
+            }
+
+            animationId = requestAnimationFrame(drawVisualizer);
+        }
+
+        // 更新 UI 状态
+        function updateUI(status, isConnected) {
+            statusText.innerText = status;
+            if (isConnected) {
+                statusDot.classList.remove('bg-red-500', 'bg-yellow-500');
+                statusDot.classList.add('bg-green-500');
+                btnIcon.classList.remove('fa-power-off');
+                btnIcon.classList.add('fa-stop');
+                toggleBtn.classList.add('shadow-pink-500/50');
+                pulseEffect.classList.remove('hidden');
+                placeholderText.classList.add('hidden');
+            } else {
+                statusDot.classList.remove('bg-green-500', 'bg-yellow-500');
+                statusDot.classList.add('bg-red-500');
+                btnIcon.classList.remove('fa-stop');
+                btnIcon.classList.add('fa-power-off');
+                toggleBtn.classList.remove('shadow-pink-500/50');
+                pulseEffect.classList.add('hidden');
+                placeholderText.classList.remove('hidden');
+                if (animationId) cancelAnimationFrame(animationId);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        // 连接 WebSocket
+        function connectSocket() {
+            const url = serverUrlInput.value;
+            try {
+                socket = new WebSocket(url);
+
+                socket.onopen = () => {
+                    console.log('WebSocket Connected');
+                    startMicrophone();
+                };
+
+                socket.onclose = () => {
+                    console.log('WebSocket Disconnected');
+                    stopMicrophone();
+                    updateUI('连接断开', false);
+                };
+
+                socket.onerror = (err) => {
+                    console.error('WebSocket Error', err);
+                    updateUI('连接错误', false);
+                    alert('无法连接到服务器，请检查地址是否正确');
+                };
+
+            } catch (e) {
+                alert('无效的 WebSocket 地址');
+            }
+        }
+
+        // 启动麦克风
+        async function startMicrophone() {
+            try {
+                const sampleRate = parseInt(sampleRateSelect.value);
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: sampleRate,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                mediaStream = stream;
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+                const source = audioContext.createMediaStreamSource(stream);
+
+                // 创建分析器用于可视化
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                // 创建 MediaRecorder 用于发送数据
+                // 注意：为了低延迟，我们通常不使用 MediaRecorder 的 blob 事件，而是直接使用 ScriptProcessor 或 AudioWorklet
+                // 但为了兼容性和简单性，这里演示使用 WebSocket 发送原始 PCM 或 Opus (如果浏览器支持)
+                // 简化版：我们使用 AudioWorklet 获取原始 PCM 数据并通过 WebSocket 发送
+
+                // 由于 AudioWorklet 需要单独文件，这里使用简化的 ScriptProcessor (已废弃但兼容性好) 或直接发送 Blob
+                // 为了更好的实时性，我们采用每隔一定时间发送一次 Blob 的方式，或者使用更高级的库
+                // 这里为了演示核心功能，我们使用 MediaRecorder 并发送 chunks
+
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (socket && socket.readyState === WebSocket.OPEN && event.data.size > 0) {
+                        // 发送二进制数据
+                        socket.send(event.data);
+                    }
+                };
+
+                mediaRecorder.start(100); // 每100ms收集一次数据
+                isRecording = true;
+                drawVisualizer();
+                updateUI('正在传输', true);
+
+            } catch (err) {
+                console.error('Error accessing microphone:', err);
+                alert('无法访问麦克风，请确保已授予权限并使用 HTTPS 或 localhost');
+                updateUI('权限拒绝', false);
+            }
+        }
+
+        // 停止麦克风
+        function stopMicrophone() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            if (socket) {
+                socket.close();
+            }
+            isRecording = false;
+            updateUI('已停止', false);
+        }
+
+        // 按钮点击事件
+        toggleBtn.addEventListener('click', () => {
+            if (!isRecording) {
+                connectSocket();
+            } else {
+                stopMicrophone();
+            }
+        });
+
+        // 初始化
+        initCanvas();
+        window.addEventListener('resize', initCanvas);
+
+    </script>
+</body>
+</html>
